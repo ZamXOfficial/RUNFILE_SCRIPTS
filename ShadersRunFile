@@ -697,13 +697,6 @@ local ok, err = xpcall(function()
         task.wait(0.18)
     end
     shade.BackgroundTransparency=1
-    -- Keep the brand mark as a compact top-center emblem above the window.
-    logo.TextSize=48
-    logo.Position=UDim2.new(0.5,0,0,34)
-    logo.Size=UDim2.fromOffset(58,58)
-    logo.Rotation=360
-    logo.TextStrokeTransparency=0.05
-    shade.BackgroundTransparency=1
 end, debug.traceback)
 
 if not ok then
