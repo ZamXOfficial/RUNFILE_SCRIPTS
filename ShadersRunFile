@@ -10,6 +10,14 @@ if ENV[GUARD_KEY] then
     warn("Скрипт уже запущен. Если его не видно - подожди полного запуска или перезайди")
     return
 end
+
+-- If a previous window was closed while keeping its visual settings, clean up
+-- its old effects before taking a fresh snapshot for this new session.
+local previousCleanup = ENV["__RUNFILE_SHADERS_CLEANUP"]
+if type(previousCleanup) == "function" then
+    pcall(previousCleanup)
+end
+
 ENV[GUARD_KEY] = true
 
 local Players = game:GetService("Players")
@@ -253,8 +261,8 @@ local function shutdown(keepSettings)
         ENV[GUARD_KEY] = nil
         ENV["__RUNFILE_SHADERS_CLEANUP"] = nil
     else
-        -- Keep the applied visual state; the cleanup hook can still restore it manually.
-        ENV[GUARD_KEY] = true
+        -- Keep the applied visual state, but release the running guard so a new UI can open.
+        ENV[GUARD_KEY] = nil
         ENV["__RUNFILE_SHADERS_CLEANUP"] = function()
             removeEffects()
             restoreLighting()
@@ -382,45 +390,47 @@ local ok, err = xpcall(function()
     local dragging = false
     local dragStart = nil
     local dragPosition = nil
-    local activeDragInput = nil
+    local dragInputType = nil
+
     local function beginDrag(input)
         if maximized or minimized then return end
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            activeDragInput = input
+            dragInputType = input.UserInputType
             dragStart = input.Position
             dragPosition = panel.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    activeDragInput = nil
-                end
-            end)
         end
     end
+
+    -- A dedicated, active hit-area covers the whole title bar except the three controls.
+    dragHandle.Active = true
     dragHandle.InputBegan:Connect(beginDrag)
     logo.Active = true
     logo.InputBegan:Connect(beginDrag)
+
     UserInputService.InputChanged:Connect(function(input)
         if not dragging then return end
-        local isMouseMove = input.UserInputType == Enum.UserInputType.MouseMovement
-        local isTouchMove = input.UserInputType == Enum.UserInputType.Touch
-            and activeDragInput and input.TouchId == activeDragInput.TouchId
-        if isMouseMove or isTouchMove then
+        local moveMouse = dragInputType == Enum.UserInputType.MouseButton1
+            and input.UserInputType == Enum.UserInputType.MouseMovement
+        local moveTouch = dragInputType == Enum.UserInputType.Touch
+            and input.UserInputType == Enum.UserInputType.Touch
+        if moveMouse or moveTouch then
             local delta = input.Position - dragStart
-            panel.Position = UDim2.new(
+            local newPosition = UDim2.new(
                 dragPosition.X.Scale, dragPosition.X.Offset + delta.X,
                 dragPosition.Y.Scale, dragPosition.Y.Offset + delta.Y
             )
-            windowedPosition = panel.Position
+            panel.Position = newPosition
+            windowedPosition = newPosition
         end
     end)
+
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
-            or (activeDragInput and input.UserInputType == Enum.UserInputType.Touch
-                and input.TouchId == activeDragInput.TouchId) then
+            or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
-            activeDragInput = nil
+            dragInputType = nil
         end
     end)
 
