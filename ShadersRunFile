@@ -253,8 +253,8 @@ local ok, err = xpcall(function()
         list.CanvasSize = UDim2.new(0,0,0,listLayout.AbsoluteContentSize.Y+10)
     end)
 
-    local manualTitle = make("TextLabel", {Position=UDim2.new(0,0,0,0.43,0), Size=UDim2.new(1,0,0,20), BackgroundTransparency=1, Text="РУЧНЫЕ НАСТРОЙКИ", TextColor3=Color3.fromRGB(130,190,151), Font=Enum.Font.GothamBold, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left}, content)
-    local manualFrame = make("ScrollingFrame", {Position=UDim2.new(0,0,0,0.43,23), Size=UDim2.new(1,0,0.57,-23), BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, CanvasSize=UDim2.new()}, content)
+    local manualTitle = make("TextLabel", {Position=UDim2.new(0,0,0.43,0), Size=UDim2.new(1,0,0,20), BackgroundTransparency=1, Text="РУЧНЫЕ НАСТРОЙКИ", TextColor3=Color3.fromRGB(130,190,151), Font=Enum.Font.GothamBold, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left}, content)
+    local manualFrame = make("ScrollingFrame", {Position=UDim2.new(0,0,0.43,23), Size=UDim2.new(1,0,0.57,-23), BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, CanvasSize=UDim2.new()}, content)
     local manualLayout = make("UIListLayout", {Padding=UDim.new(0,7), SortOrder=Enum.SortOrder.LayoutOrder}, manualFrame)
     manualLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
         manualFrame.CanvasSize = UDim2.new(0,0,0,manualLayout.AbsoluteContentSize.Y+8)
@@ -315,6 +315,22 @@ local ok, err = xpcall(function()
     addSlider("Bloom","BloomIntensity",0,3,manual.BloomIntensity)
     addSlider("Насыщенность","Saturation",-1,1,manual.Saturation)
 
+    local tintRow = make("Frame", {Size=UDim2.new(1,0,0,25), BackgroundTransparency=1}, manualFrame)
+    make("TextLabel", {Size=UDim2.new(0.62,0,1,0), BackgroundTransparency=1, Text="Цветовой оттенок", TextColor3=Color3.fromRGB(205,220,210), Font=Enum.Font.Gotham, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left}, tintRow)
+    local tintButton = make("TextButton", {AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,0,0.5,0), Size=UDim2.new(0.34,0,0,21), BackgroundColor3=manual.TintColor, Text="Изменить", TextColor3=Color3.fromRGB(20,25,22), Font=Enum.Font.GothamSemibold, TextSize=9}, tintRow)
+    make("UICorner", {CornerRadius=UDim.new(0,5)}, tintButton)
+    local tintChoices = {
+        Color3.fromRGB(255,224,219), Color3.fromRGB(255,230,200),
+        Color3.fromRGB(185,205,255), Color3.fromRGB(205,215,255),
+        Color3.fromRGB(255,230,255), Color3.fromRGB(255,255,255)
+    }
+    local tintIndex = 1
+    tintButton.MouseButton1Click:Connect(function()
+        tintIndex = tintIndex % #tintChoices + 1
+        tintButton.BackgroundColor3 = tintChoices[tintIndex]
+        applyManual("TintColor", tintChoices[tintIndex])
+    end)
+
     local function setEnabled(state)
         enabled = state
         activate.Text = state and "●  Активировать: ВКЛ" or "●  Активировать: ВЫКЛ"
@@ -329,8 +345,10 @@ local ok, err = xpcall(function()
     panel.Rotation=-2
     tween(panel,0.55,{Size=UDim2.fromScale(0.25,0.5),BackgroundTransparency=0.04,Rotation=0},Enum.EasingStyle.Back)
     tween(stroke,0.45,{Transparency=0.12})
-    for i=1,#("Здравствуй") do
-        header.Text=string.sub("Здравствуй",1,i)
+    local greeting = "Здравствуй"
+    for i=1,utf8.len(greeting) do
+        local nextByte = utf8.offset(greeting, i+1)
+        header.Text = string.sub(greeting, 1, nextByte and nextByte-1 or #greeting)
         header.TextTransparency=1
         tween(header,0.08,{TextTransparency=0},Enum.EasingStyle.Linear)
         task.wait(0.055)
