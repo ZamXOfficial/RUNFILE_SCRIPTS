@@ -292,7 +292,7 @@ local ok, err = xpcall(function()
     local panel = make("Frame", {
         Name="Main", AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.54),
         Size=UDim2.fromScale(0.25,0.5), BackgroundColor3=Color3.fromRGB(15,22,19),
-        BackgroundTransparency=1, BorderSizePixel=0, ClipsDescendants=true
+        BackgroundTransparency=1, BorderSizePixel=0, ClipsDescendants=true, Visible=false
     }, shade)
     make("UICorner", {CornerRadius=UDim.new(0,12)}, panel)
     local stroke = make("UIStroke", {Color=Color3.fromRGB(48,160,92), Thickness=1.4, Transparency=1}, panel)
@@ -304,6 +304,11 @@ local ok, err = xpcall(function()
         ZIndex=5
     }, panel)
     local line = make("Frame", {Position=UDim2.new(0,0,0,40), Size=UDim2.new(1,0,0,1), BackgroundColor3=Color3.fromRGB(48,160,92), BackgroundTransparency=0.35, BorderSizePixel=0}, panel)
+    local dragHandle = make("TextButton", {
+        Position=UDim2.new(0,0,0,0), Size=UDim2.new(1,-108,0,40),
+        BackgroundTransparency=1, Text="", AutoButtonColor=false, Active=true,
+        ZIndex=6
+    }, panel)
 
     local content = make("Frame", {Position=UDim2.new(0,0,0,50), Size=UDim2.new(1,0,1,-50), BackgroundTransparency=1}, panel)
 
@@ -377,27 +382,45 @@ local ok, err = xpcall(function()
     local dragging = false
     local dragStart = nil
     local dragPosition = nil
+    local activeDragInput = nil
     local function beginDrag(input)
         if maximized or minimized then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
+            activeDragInput = input
             dragStart = input.Position
             dragPosition = panel.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    activeDragInput = nil
+                end
             end)
         end
     end
-    header.InputBegan:Connect(beginDrag)
+    dragHandle.InputBegan:Connect(beginDrag)
+    logo.Active = true
     logo.InputBegan:Connect(beginDrag)
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        if not dragging then return end
+        local isMouseMove = input.UserInputType == Enum.UserInputType.MouseMovement
+        local isTouchMove = input.UserInputType == Enum.UserInputType.Touch
+            and activeDragInput and input.TouchId == activeDragInput.TouchId
+        if isMouseMove or isTouchMove then
             local delta = input.Position - dragStart
             panel.Position = UDim2.new(
                 dragPosition.X.Scale, dragPosition.X.Offset + delta.X,
                 dragPosition.Y.Scale, dragPosition.Y.Offset + delta.Y
             )
             windowedPosition = panel.Position
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or (activeDragInput and input.UserInputType == Enum.UserInputType.Touch
+                and input.TouchId == activeDragInput.TouchId) then
+            dragging = false
+            activeDragInput = nil
         end
     end)
 
@@ -669,36 +692,59 @@ local ok, err = xpcall(function()
     end
     activate.MouseButton1Click:Connect(function() setEnabled(not enabled) end)
 
-    -- Slow intro: reveal the logo, unfold the panel, then settle the mark into the panel header.
+    -- Intro: only the Z is visible. The screen stays undimmed and the panel remains hidden.
     panel.Size = UDim2.fromScale(0.10,0.10)
     panel.Position = UDim2.fromScale(0.5,0.54)
     panel.BackgroundTransparency = 1
     panel.Rotation = -1.5
-    tween(shade,0.95,{BackgroundTransparency=0.28},Enum.EasingStyle.Sine)
-    tween(logo,1.25,{TextTransparency=0,TextStrokeTransparency=0.05},Enum.EasingStyle.Sine)
-    task.wait(1.05)
-    tween(panel,1.45,{
-        Size=UDim2.fromScale(0.25,0.5),
-        BackgroundTransparency=0.04,
-        Rotation=0
-    },Enum.EasingStyle.Quint)
-    tween(stroke,1.1,{Transparency=0.12},Enum.EasingStyle.Sine)
-    tween(logo,1.6,{
+    shade.BackgroundTransparency = 1
+
+    local logoFade = tween(logo,1.8,{
+        TextTransparency=0,
+        TextStrokeTransparency=0.05
+    },Enum.EasingStyle.Sine)
+    logoFade.Completed:Wait()
+
+    -- The destination matches the future panel header; the panel itself is still invisible.
+    local logoMove = tween(logo,1.9,{
         Position=UDim2.new(0.375,31,0.29,20),
         Size=UDim2.fromOffset(38,38),
         Rotation=0,
         TextSize=42
-    },Enum.EasingStyle.Sine)
-    task.wait(0.55)
+    },Enum.EasingStyle.Quint)
+    logoMove.Completed:Wait()
+
+    -- Make Z part of the window header so it follows the window when dragged or maximized.
+    logo.Parent = panel
+    logo.AnchorPoint = Vector2.new(0.5,0.5)
+    logo.Position = UDim2.new(0,31,0,20)
+    logo.Size = UDim2.fromOffset(38,38)
+    logo.Rotation = 0
+    logo.TextSize = 42
+    logo.ZIndex = 7
+
+    -- Only now does the window appear.
+    panel.Visible = true
+    panel.Size = UDim2.fromScale(0.10,0.10)
+    panel.BackgroundTransparency = 1
+    panel.Rotation = -1.5
+    local panelTween = tween(panel,1.5,{
+        Size=UDim2.fromScale(0.25,0.5),
+        BackgroundTransparency=0.04,
+        Rotation=0
+    },Enum.EasingStyle.Quint)
+    tween(stroke,1.2,{Transparency=0.12},Enum.EasingStyle.Sine)
+    panelTween.Completed:Wait()
+
+    task.wait(0.2)
     local greeting = "Здравствуй"
     for i=1,utf8.len(greeting) do
         local nextByte = utf8.offset(greeting, i+1)
         header.Text = string.sub(greeting, 1, nextByte and nextByte-1 or #greeting)
         header.TextTransparency=1
-        tween(header,0.22,{TextTransparency=0},Enum.EasingStyle.Sine)
-        task.wait(0.18)
+        tween(header,0.24,{TextTransparency=0},Enum.EasingStyle.Sine)
+        task.wait(0.20)
     end
-    shade.BackgroundTransparency=1
 end, debug.traceback)
 
 if not ok then
