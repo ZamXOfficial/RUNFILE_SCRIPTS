@@ -409,6 +409,18 @@ local ok, err = xpcall(function()
     logo.Active = true
     logo.InputBegan:Connect(beginDrag)
 
+    -- Explicit mouse-down hooks make dragging reliable on desktop executors
+    -- even when transparent GUI hitboxes do not forward InputBegan consistently.
+    local function beginMouseDrag()
+        if maximized or minimized then return end
+        dragging = true
+        dragInputType = Enum.UserInputType.MouseButton1
+        dragStart = UserInputService:GetMouseLocation()
+        dragPosition = panel.Position
+    end
+    dragHandle.MouseButton1Down:Connect(beginMouseDrag)
+    logo.MouseButton1Down:Connect(beginMouseDrag)
+
     UserInputService.InputChanged:Connect(function(input)
         if not dragging then return end
         local moveMouse = dragInputType == Enum.UserInputType.MouseButton1
