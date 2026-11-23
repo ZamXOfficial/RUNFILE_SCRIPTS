@@ -294,16 +294,16 @@ local ok, err = xpcall(function()
         Size=UDim2.fromOffset(150,150), BackgroundTransparency=1, Text="z",
         Font=Enum.Font.GothamBlack, TextSize=144, TextColor3=Color3.fromRGB(35,220,105),
         TextStrokeColor3=Color3.fromRGB(5,75,35), TextStrokeTransparency=1, TextTransparency=1,
-        Rotation=-18, ZIndex=20
+        Rotation=0, ZIndex=20
     }, shade)
 
     local panel = make("Frame", {
         Name="Main", AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.54),
         Size=UDim2.fromScale(0.25,0.5), BackgroundColor3=Color3.fromRGB(15,22,19),
-        BackgroundTransparency=1, BorderSizePixel=0, ClipsDescendants=true, Visible=false
+        BackgroundTransparency=0.04, BorderSizePixel=0, ClipsDescendants=true
     }, shade)
     make("UICorner", {CornerRadius=UDim.new(0,12)}, panel)
-    local stroke = make("UIStroke", {Color=Color3.fromRGB(48,160,92), Thickness=1.4, Transparency=1}, panel)
+    local stroke = make("UIStroke", {Color=Color3.fromRGB(48,160,92), Thickness=1.4, Transparency=0.12}, panel)
     make("UIPadding", {PaddingTop=UDim.new(0,12), PaddingBottom=UDim.new(0,10), PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12)}, panel)
     local header = make("TextLabel", {
         Position=UDim2.new(0,58,0,0), Size=UDim2.new(0.48,0,0,36),
@@ -365,7 +365,8 @@ local ok, err = xpcall(function()
             windowedPosition = panel.Position
             minimized = true
             content.Visible = false
-            animateWindow(UDim2.new(windowedSize.X.Scale, windowedSize.X.Offset, 0, 48), UDim2.new(0.5,0,0.29,24), 0.38)
+            -- Collapse in place instead of snapping the title bar to screen center.
+            animateWindow(UDim2.new(windowedSize.X.Scale, windowedSize.X.Offset, 0, 48), panel.Position, 0.38)
         end
     end)
 
@@ -393,7 +394,8 @@ local ok, err = xpcall(function()
     local dragInputType = nil
 
     local function beginDrag(input)
-        if maximized or minimized then return end
+        -- The collapsed title bar remains draggable; only the maximized window is locked.
+        if maximized then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
@@ -705,50 +707,70 @@ local ok, err = xpcall(function()
     end
     activate.MouseButton1Click:Connect(function() setEnabled(not enabled) end)
 
-    -- Intro: only the Z is visible. The screen stays undimmed and the panel remains hidden.
-    panel.Size = UDim2.fromScale(0.10,0.10)
-    panel.Position = UDim2.fromScale(0.5,0.54)
-    panel.BackgroundTransparency = 1
-    panel.Rotation = -1.5
+    -- Keep the panel at its final size and position from the beginning.
+    -- All visible interface elements start transparent and fade in after the Z intro.
     shade.BackgroundTransparency = 1
+    local fadeTargets = {}
+    local transparencyProperties = {
+        "BackgroundTransparency",
+        "TextTransparency",
+        "TextStrokeTransparency",
+        "ImageTransparency",
+        "ScrollBarImageTransparency",
+        "Transparency"
+    }
+    local function prepareForFade(instance)
+        local properties = {}
+        for _, property in ipairs(transparencyProperties) do
+            local ok, value = pcall(function() return instance[property] end)
+            if ok and type(value) == "number" then
+                properties[property] = value
+                pcall(function() instance[property] = 1 end)
+            end
+        end
+        if next(properties) then fadeTargets[instance] = properties end
+    end
+    prepareForFade(panel)
+    for _, descendant in ipairs(panel:GetDescendants()) do
+        prepareForFade(descendant)
+    end
 
-    local logoFade = tween(logo,1.8,{
+    -- The Z starts upright, spins visibly, then travels into the header.
+    local logoFade = tween(logo,1.35,{
         TextTransparency=0,
-        TextStrokeTransparency=0.05
-    },Enum.EasingStyle.Sine)
+        TextStrokeTransparency=0.05,
+        Rotation=360
+    },Enum.EasingStyle.Linear)
     logoFade.Completed:Wait()
 
-    -- The destination matches the future panel header; the panel itself is still invisible.
-    local logoMove = tween(logo,1.9,{
-        Position=UDim2.new(0.375,31,0.29,20),
+    local panelLeft = panel.Position.X.Scale - panel.Size.X.Scale * 0.5
+    local panelTop = panel.Position.Y.Scale - panel.Size.Y.Scale * 0.5
+    local logoMove = tween(logo,1.65,{
+        Position=UDim2.new(panelLeft,31,panelTop,20),
         Size=UDim2.fromOffset(38,38),
-        Rotation=0,
         TextSize=42
     },Enum.EasingStyle.Quint)
+    local logoSpin = tween(logo,1.65,{Rotation=720},Enum.EasingStyle.Linear)
     logoMove.Completed:Wait()
+    logoSpin.Completed:Wait()
 
-    -- Make Z part of the window header so it follows the window when dragged or maximized.
+    -- Reparent Z into the header at a clean, upright alignment.
     logo.Parent = panel
     logo.AnchorPoint = Vector2.new(0.5,0.5)
-    logo.Position = UDim2.new(0,31,0,20)
+    logo.Position = UDim2.fromOffset(31,20)
     logo.Size = UDim2.fromOffset(38,38)
     logo.Rotation = 0
     logo.TextSize = 42
     logo.ZIndex = 7
 
-    -- Only now does the window appear.
-    panel.Visible = true
-    panel.Size = UDim2.fromScale(0.10,0.10)
-    panel.BackgroundTransparency = 1
-    panel.Rotation = -1.5
-    local panelTween = tween(panel,1.5,{
-        Size=UDim2.fromScale(0.25,0.5),
-        BackgroundTransparency=0.04,
-        Rotation=0
-    },Enum.EasingStyle.Quint)
-    tween(stroke,1.2,{Transparency=0.12},Enum.EasingStyle.Sine)
-    panelTween.Completed:Wait()
+    -- Fade the panel, outline, text, buttons, sliders and scrollbars in place.
+    for instance, properties in pairs(fadeTargets) do
+        if instance.Parent then
+            tween(instance,1.15,properties,Enum.EasingStyle.Sine)
+        end
+    end
 
+    task.wait(1.2)
     task.wait(0.2)
     local greeting = "Здравствуй"
     for i=1,utf8.len(greeting) do
