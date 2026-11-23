@@ -129,12 +129,15 @@ local function applyShaderLevel()
     local strength = math.clamp(manual.Level or 1, 0, 2)
     local blend = math.clamp(strength, 0, 1)
 
-    -- Blend the preset's color atmosphere against the pre-inject lighting.
-    for _, key in ipairs({"ColorShift_Bottom", "ColorShift_Top", "OutdoorAmbient", "FogColor", "Ambient"}) do
+    -- Blend the full Lighting preset against the pre-inject state.
+    for key, target in pairs(preset.Lighting or {}) do
         local base = originalLighting[key]
-        local target = preset.Lighting and preset.Lighting[key]
+        if key == "Brightness" then target = manual.Brightness
+        elseif key == "ExposureCompensation" then target = manual.Exposure end
         if typeof(base) == "Color3" and typeof(target) == "Color3" then
             pcall(function() Lighting[key] = base:Lerp(target, blend) end)
+        elseif type(base) == "number" and type(target) == "number" then
+            pcall(function() Lighting[key] = base + (target-base)*blend end)
         end
     end
 
@@ -221,11 +224,8 @@ end
 local function applyManual(key, value)
     manual[key] = value
     if not enabled then return end
-    if key == "Brightness" then
-        Lighting.Brightness = value
-    elseif key == "Exposure" then
-        Lighting.ExposureCompensation = value
-    elseif key == "Level" or key == "BloomIntensity" or key == "Saturation" or key == "TintColor" then
+    if key == "Brightness" or key == "Exposure" or key == "Level"
+        or key == "BloomIntensity" or key == "Saturation" or key == "TintColor" then
         applyShaderLevel()
     end
 end
@@ -608,6 +608,7 @@ local ok, err = xpcall(function()
         local function setValue(value, apply)
             value = math.clamp(value,minValue,maxValue)
             local a = (value-minValue)/(maxValue-minValue)
+            if channel=="Brightness" then a = 1-a end
             knob.Position = UDim2.new(a,0,0.5,0)
             valueText.Text = channel=="Brightness" and string.format("%.2f",value) or tostring(math.floor(value+0.5))
             if channel=="R" then tintR=value
@@ -619,6 +620,7 @@ local ok, err = xpcall(function()
         tintSetters[channel] = setValue
         local function setFromX(x)
             local a = math.clamp((x-track.AbsolutePosition.X)/math.max(track.AbsoluteSize.X,1),0,1)
+            if channel=="Brightness" then a = 1-a end
             setValue(minValue+(maxValue-minValue)*a,true)
         end
         knob.MouseButton1Down:Connect(function() draggingColor=true end)
