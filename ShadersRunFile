@@ -746,7 +746,7 @@ local ok, err = xpcall(function()
     local panelLeft = panel.Position.X.Scale - panel.Size.X.Scale * 0.5
     local panelTop = panel.Position.Y.Scale - panel.Size.Y.Scale * 0.5
     local logoMove = tween(logo,1.65,{
-        Position=UDim2.new(panelLeft,31,panelTop,20),
+        Position=UDim2.new(panelLeft,31,panelTop,18),
         Size=UDim2.fromOffset(38,38),
         TextSize=42
     },Enum.EasingStyle.Quint)
@@ -757,11 +757,13 @@ local ok, err = xpcall(function()
     -- Reparent Z into the header at a clean, upright alignment.
     logo.Parent = panel
     logo.AnchorPoint = Vector2.new(0.5,0.5)
-    logo.Position = UDim2.fromOffset(31,20)
+    logo.Position = UDim2.fromOffset(31,18)
     logo.Size = UDim2.fromOffset(38,38)
     logo.Rotation = 0
     logo.TextSize = 42
     logo.ZIndex = 7
+    -- Include Z in the same final fade as the rest of the window.
+    prepareForFade(logo)
 
     -- Fade the panel, outline, text, buttons, sliders and scrollbars in place.
     for instance, properties in pairs(fadeTargets) do
