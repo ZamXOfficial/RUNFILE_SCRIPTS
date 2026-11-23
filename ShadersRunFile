@@ -419,7 +419,7 @@ local ok, err = xpcall(function()
         dragPosition = panel.Position
     end
     dragHandle.MouseButton1Down:Connect(beginMouseDrag)
-    logo.MouseButton1Down:Connect(beginMouseDrag)
+    -- ZMark is a TextLabel, so use its GuiObject InputBegan hook above.
 
     UserInputService.InputChanged:Connect(function(input)
         if not dragging then return end
