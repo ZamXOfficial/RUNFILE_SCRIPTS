@@ -23,7 +23,10 @@ local createdEffects = {}
 local originalLighting = {}
 local currentPreset = "Scarlet Atmosphere"
 local enabled = false
+local sliderSetters = {}
+local updateTintControls = nil
 local manual = {
+    Level = 1,
     Brightness = 2.14,
     Exposure = 0.24,
     BloomIntensity = 0.1,
@@ -120,6 +123,48 @@ local presets = {
     },
 }
 
+local function applyShaderLevel()
+    local preset = presets[currentPreset]
+    if not preset then return end
+    local strength = math.clamp(manual.Level or 1, 0, 2)
+    local blend = math.clamp(strength, 0, 1)
+
+    -- Blend the preset's color atmosphere against the pre-inject lighting.
+    for _, key in ipairs({"ColorShift_Bottom", "ColorShift_Top", "OutdoorAmbient", "FogColor", "Ambient"}) do
+        local base = originalLighting[key]
+        local target = preset.Lighting and preset.Lighting[key]
+        if typeof(base) == "Color3" and typeof(target) == "Color3" then
+            pcall(function() Lighting[key] = base:Lerp(target, blend) end)
+        end
+    end
+
+    for _, effect in ipairs(createdEffects) do
+        if effect:IsA("BloomEffect") then
+            effect.Intensity = (manual.BloomIntensity or 0) * strength
+        elseif effect:IsA("BlurEffect") then
+            local base = preset.Blur and preset.Blur.Size or 0
+            effect.Size = base * strength
+        elseif effect:IsA("ColorCorrectionEffect") then
+            local cc = preset.CC or {}
+            effect.Brightness = (cc.Brightness or 0) * strength
+            effect.Contrast = (cc.Contrast or 0) * strength
+            effect.Saturation = (manual.Saturation or 0) * strength
+            effect.TintColor = Color3.new(1, 1, 1):Lerp(manual.TintColor or Color3.new(1, 1, 1), blend)
+        elseif effect:IsA("SunRaysEffect") then
+            local rays = preset.SunRays or {}
+            effect.Intensity = (rays.Intensity or 0) * strength
+            effect.Spread = rays.Spread or effect.Spread
+        elseif effect:IsA("Atmosphere") then
+            local atmosphere = preset.Atmosphere or {}
+            effect.Density = (atmosphere.Density or 0) * strength
+            effect.Haze = (atmosphere.Haze or 0) * strength
+            effect.Glare = (atmosphere.Glare or 0) * strength
+            if atmosphere.Color then effect.Color = Color3.new(1, 1, 1):Lerp(atmosphere.Color, blend) end
+            if atmosphere.Decay then effect.Decay = Color3.new(1, 1, 1):Lerp(atmosphere.Decay, blend) end
+        end
+    end
+end
+
 local function applyPreset(name)
     local preset = presets[name]
     if not preset then return end
@@ -149,7 +194,7 @@ local function applyPreset(name)
         local e = newEffect("Atmosphere", "Atmosphere")
         for k,v in pairs(preset.Atmosphere) do e[k] = v end
     end
-    -- Manual values are applied after preset selection, matching Zenith's controls.
+
     manual.Brightness = Lighting.Brightness
     manual.Exposure = Lighting.ExposureCompensation
     for _, effect in ipairs(createdEffects) do
@@ -159,19 +204,29 @@ local function applyPreset(name)
             manual.TintColor = effect.TintColor
         end
     end
+    applyShaderLevel()
+
+    for key, value in pairs({
+        Level = manual.Level,
+        Brightness = manual.Brightness,
+        Exposure = manual.Exposure,
+        BloomIntensity = manual.BloomIntensity,
+        Saturation = manual.Saturation,
+    }) do
+        if sliderSetters[key] then sliderSetters[key](value, false) end
+    end
+    if updateTintControls then updateTintControls(manual.TintColor) end
 end
 
 local function applyManual(key, value)
     manual[key] = value
     if not enabled then return end
-    if key == "Brightness" then Lighting.Brightness = value
-    elseif key == "Exposure" then Lighting.ExposureCompensation = value
-    else
-        for _, effect in ipairs(createdEffects) do
-            if key == "BloomIntensity" and effect:IsA("BloomEffect") then effect.Intensity = value end
-            if key == "Saturation" and effect:IsA("ColorCorrectionEffect") then effect.Saturation = value end
-            if key == "TintColor" and effect:IsA("ColorCorrectionEffect") then effect.TintColor = value end
-        end
+    if key == "Brightness" then
+        Lighting.Brightness = value
+    elseif key == "Exposure" then
+        Lighting.ExposureCompensation = value
+    elseif key == "Level" or key == "BloomIntensity" or key == "Saturation" or key == "TintColor" then
+        applyShaderLevel()
     end
 end
 
@@ -188,14 +243,26 @@ local function make(class, props, parent)
     return obj
 end
 
-local function shutdown()
+local function shutdown(keepSettings)
     if not alive then return end
     alive = false
     enabled = false
-    removeEffects()
-    restoreLighting()
+    if not keepSettings then
+        removeEffects()
+        restoreLighting()
+        ENV[GUARD_KEY] = nil
+        ENV["__RUNFILE_SHADERS_CLEANUP"] = nil
+    else
+        -- Keep the applied visual state; the cleanup hook can still restore it manually.
+        ENV[GUARD_KEY] = true
+        ENV["__RUNFILE_SHADERS_CLEANUP"] = function()
+            removeEffects()
+            restoreLighting()
+            ENV[GUARD_KEY] = nil
+            ENV["__RUNFILE_SHADERS_CLEANUP"] = nil
+        end
+    end
     if gui then pcall(function() gui:Destroy() end) end
-    ENV[GUARD_KEY] = nil
 end
 
 local ok, err = xpcall(function()
@@ -219,25 +286,162 @@ local ok, err = xpcall(function()
         Size=UDim2.fromOffset(150,150), BackgroundTransparency=1, Text="z",
         Font=Enum.Font.GothamBlack, TextSize=144, TextColor3=Color3.fromRGB(35,220,105),
         TextStrokeColor3=Color3.fromRGB(5,75,35), TextStrokeTransparency=1, TextTransparency=1,
-        Rotation=-18
+        Rotation=-18, ZIndex=20
     }, shade)
-    tween(logo, 0.65, {TextTransparency=0, TextStrokeTransparency=0.05}, Enum.EasingStyle.Quad)
-    task.wait(0.62)
-    tween(logo, 0.78, {Position=UDim2.new(0.5,0,0,42), Size=UDim2.fromOffset(58,58), Rotation=342}, Enum.EasingStyle.Back)
-    task.wait(0.3)
 
     local panel = make("Frame", {
         Name="Main", AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.54),
         Size=UDim2.fromScale(0.25,0.5), BackgroundColor3=Color3.fromRGB(15,22,19),
-        BackgroundTransparency=1, BorderSizePixel=0
+        BackgroundTransparency=1, BorderSizePixel=0, ClipsDescendants=true
     }, shade)
     make("UICorner", {CornerRadius=UDim.new(0,12)}, panel)
     local stroke = make("UIStroke", {Color=Color3.fromRGB(48,160,92), Thickness=1.4, Transparency=1}, panel)
     make("UIPadding", {PaddingTop=UDim.new(0,12), PaddingBottom=UDim.new(0,10), PaddingLeft=UDim.new(0,12), PaddingRight=UDim.new(0,12)}, panel)
-    local header = make("TextLabel", {Size=UDim2.new(1,0,0,36), BackgroundTransparency=1, Text="", Font=Enum.Font.GothamBold, TextSize=21, TextColor3=Color3.fromRGB(235,245,238), TextXAlignment=Enum.TextXAlignment.Left}, panel)
+    local header = make("TextLabel", {
+        Position=UDim2.new(0,58,0,0), Size=UDim2.new(0.48,0,0,36),
+        BackgroundTransparency=1, Text="", Font=Enum.Font.GothamBold, TextSize=21,
+        TextColor3=Color3.fromRGB(235,245,238), TextXAlignment=Enum.TextXAlignment.Left,
+        ZIndex=5
+    }, panel)
     local line = make("Frame", {Position=UDim2.new(0,0,0,40), Size=UDim2.new(1,0,0,1), BackgroundColor3=Color3.fromRGB(48,160,92), BackgroundTransparency=0.35, BorderSizePixel=0}, panel)
 
     local content = make("Frame", {Position=UDim2.new(0,0,0,50), Size=UDim2.new(1,0,1,-50), BackgroundTransparency=1}, panel)
+
+    local function makeHeaderButton(text, xOffset, baseColor)
+        local button = make("TextButton", {
+            AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,xOffset,0,6),
+            Size=UDim2.fromOffset(22,22), BackgroundColor3=baseColor,
+            BackgroundTransparency=0.2, BorderSizePixel=0, Text=text,
+            TextColor3=Color3.fromRGB(220,235,225), Font=Enum.Font.GothamBold,
+            TextSize=15, AutoButtonColor=false, ZIndex=8
+        }, panel)
+        make("UICorner", {CornerRadius=UDim.new(0,5)}, button)
+        return button
+    end
+    local minimizeButton = makeHeaderButton("−", -78, Color3.fromRGB(34,48,39))
+    local maximizeButton = makeHeaderButton("□", -52, Color3.fromRGB(34,48,39))
+    local closeButton = makeHeaderButton("×", -26, Color3.fromRGB(55,42,42))
+    closeButton.MouseEnter:Connect(function()
+        tween(closeButton, 0.12, {BackgroundColor3=Color3.fromRGB(210,45,55), BackgroundTransparency=0}, Enum.EasingStyle.Quad)
+        closeButton.TextColor3 = Color3.new(1,1,1)
+    end)
+    closeButton.MouseLeave:Connect(function()
+        tween(closeButton, 0.16, {BackgroundColor3=Color3.fromRGB(55,42,42), BackgroundTransparency=0.2}, Enum.EasingStyle.Quad)
+        closeButton.TextColor3 = Color3.fromRGB(220,235,225)
+    end)
+
+    local windowedSize = panel.Size
+    local windowedPosition = panel.Position
+    local minimized = false
+    local maximized = false
+    local function animateWindow(size, position, duration)
+        tween(panel, duration or 0.42, {Size=size, Position=position}, Enum.EasingStyle.Quint)
+    end
+
+    minimizeButton.MouseButton1Click:Connect(function()
+        if maximized then
+            maximized = false
+            content.Visible = true
+            animateWindow(windowedSize, windowedPosition, 0.45)
+        elseif minimized then
+            minimized = false
+            content.Visible = true
+            animateWindow(windowedSize, windowedPosition, 0.45)
+        else
+            windowedSize = panel.Size
+            windowedPosition = panel.Position
+            minimized = true
+            content.Visible = false
+            animateWindow(UDim2.new(windowedSize.X.Scale, windowedSize.X.Offset, 0, 48), UDim2.new(0.5,0,0.29,24), 0.38)
+        end
+    end)
+
+    maximizeButton.MouseButton1Click:Connect(function()
+        if maximized then
+            maximized = false
+            minimized = false
+            content.Visible = true
+            animateWindow(windowedSize, windowedPosition, 0.48)
+        else
+            if not minimized and not maximized then
+                windowedSize = panel.Size
+                windowedPosition = panel.Position
+            end
+            maximized = true
+            minimized = false
+            content.Visible = true
+            animateWindow(UDim2.fromScale(0.94,0.90), UDim2.fromScale(0.5,0.5), 0.58)
+        end
+    end)
+
+    local dragging = false
+    local dragStart = nil
+    local dragPosition = nil
+    local function beginDrag(input)
+        if maximized or minimized then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            dragPosition = panel.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end
+    header.InputBegan:Connect(beginDrag)
+    logo.InputBegan:Connect(beginDrag)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            panel.Position = UDim2.new(
+                dragPosition.X.Scale, dragPosition.X.Offset + delta.X,
+                dragPosition.Y.Scale, dragPosition.Y.Offset + delta.Y
+            )
+            windowedPosition = panel.Position
+        end
+    end)
+
+    local modalOverlay = make("Frame", {
+        Size=UDim2.fromScale(1,1), BackgroundColor3=Color3.fromRGB(0,0,0),
+        BackgroundTransparency=0.38, BorderSizePixel=0, Visible=false, ZIndex=40
+    }, shade)
+    local modal = make("Frame", {
+        AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5),
+        Size=UDim2.fromOffset(320,142), BackgroundColor3=Color3.fromRGB(19,29,23),
+        BorderSizePixel=0, ZIndex=41
+    }, modalOverlay)
+    make("UICorner", {CornerRadius=UDim.new(0,10)}, modal)
+    make("UIStroke", {Color=Color3.fromRGB(65,165,98), Thickness=1.3, Transparency=0.15}, modal)
+    local modalText = make("TextLabel", {
+        Position=UDim2.new(0,16,0,16), Size=UDim2.new(1,-32,0,56),
+        BackgroundTransparency=1, Text="Сохранить настройки с закрытием окна?",
+        TextWrapped=true, TextColor3=Color3.fromRGB(235,245,238),
+        Font=Enum.Font.GothamSemibold, TextSize=14, ZIndex=42
+    }, modal)
+    local yesButton = make("TextButton", {
+        Position=UDim2.new(0,16,1,-48), Size=UDim2.new(0.5,-22,0,32),
+        BackgroundColor3=Color3.fromRGB(37,135,76), Text="Да",
+        TextColor3=Color3.new(1,1,1), Font=Enum.Font.GothamBold, TextSize=12,
+        BorderSizePixel=0, ZIndex=42
+    }, modal)
+    make("UICorner", {CornerRadius=UDim.new(0,6)}, yesButton)
+    local noButton = make("TextButton", {
+        Position=UDim2.new(0.5,6,1,-48), Size=UDim2.new(0.5,-22,0,32),
+        BackgroundColor3=Color3.fromRGB(55,67,58), Text="Нет",
+        TextColor3=Color3.fromRGB(235,245,238), Font=Enum.Font.GothamBold, TextSize=12,
+        BorderSizePixel=0, ZIndex=42
+    }, modal)
+    make("UICorner", {CornerRadius=UDim.new(0,6)}, noButton)
+    closeButton.MouseButton1Click:Connect(function()
+        modalOverlay.Visible = true
+        modalOverlay.BackgroundTransparency = 1
+        modal.Size = UDim2.fromOffset(280,122)
+        tween(modalOverlay,0.28,{BackgroundTransparency=0.38},Enum.EasingStyle.Sine)
+        tween(modal,0.32,{Size=UDim2.fromOffset(320,142)},Enum.EasingStyle.Back)
+    end)
+    yesButton.MouseButton1Click:Connect(function() shutdown(true) end)
+    noButton.MouseButton1Click:Connect(function() shutdown(false) end)
+
     local activate = make("TextButton", {
         Size=UDim2.new(1,0,0,30), BackgroundColor3=Color3.fromRGB(25,90,55), Text="●  Активировать: ВЫКЛ",
         TextColor3=Color3.fromRGB(235,245,238), Font=Enum.Font.GothamSemibold, TextSize=12, AutoButtonColor=true
@@ -289,46 +493,170 @@ local ok, err = xpcall(function()
         make("UICorner", {CornerRadius=UDim.new(1,0)}, fill)
         local knob = make("TextButton", {AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new((initial-minValue)/(maxValue-minValue),0,0.5,0), Size=UDim2.fromOffset(12,12), BackgroundColor3=Color3.fromRGB(225,245,230), Text="", AutoButtonColor=false}, track)
         make("UICorner", {CornerRadius=UDim.new(1,0)}, knob)
-        local dragging = false
+        local draggingSlider = false
+        local function setValue(value, shouldApply)
+            value = math.clamp(value, minValue, maxValue)
+            local alpha = (value-minValue)/(maxValue-minValue)
+            fill.Size = UDim2.new(alpha,0,1,0)
+            knob.Position = UDim2.new(alpha,0,0.5,0)
+            caption.Text = label.."  "..string.format("%.2f", value)
+            if shouldApply ~= false then applyManual(key,value) end
+        end
+        sliderSetters[key] = setValue
         local function setFromX(x)
             local alpha = math.clamp((x-track.AbsolutePosition.X)/math.max(track.AbsoluteSize.X,1),0,1)
             local value = minValue+(maxValue-minValue)*alpha
             value = math.floor(value*100+0.5)/100
-            fill.Size = UDim2.new(alpha,0,1,0)
-            knob.Position = UDim2.new(alpha,0,0.5,0)
-            caption.Text = label.."  "..string.format("%.2f", value)
-            applyManual(key,value)
+            setValue(value,true)
         end
-        knob.MouseButton1Down:Connect(function() dragging=true end)
+        knob.MouseButton1Down:Connect(function() draggingSlider=true end)
         track.InputBegan:Connect(function(input)
-            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=true; setFromX(input.Position.X) end
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                draggingSlider=true
+                setFromX(input.Position.X)
+            end
         end)
         UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then setFromX(input.Position.X) end
+            if draggingSlider and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+                setFromX(input.Position.X)
+            end
         end)
         UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then draggingSlider=false end
         end)
     end
+    addSlider("Уровень шейдера","Level",0,2,manual.Level)
     addSlider("Яркость","Brightness",0,5,manual.Brightness)
     addSlider("Экспозиция","Exposure",-3,3,manual.Exposure)
     addSlider("Bloom","BloomIntensity",0,3,manual.BloomIntensity)
     addSlider("Насыщенность","Saturation",-1,1,manual.Saturation)
 
-    local tintRow = make("Frame", {Size=UDim2.new(1,0,0,25), BackgroundTransparency=1}, manualFrame)
-    make("TextLabel", {Size=UDim2.new(0.62,0,1,0), BackgroundTransparency=1, Text="Цветовой оттенок", TextColor3=Color3.fromRGB(205,220,210), Font=Enum.Font.Gotham, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left}, tintRow)
-    local tintButton = make("TextButton", {AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,0,0.5,0), Size=UDim2.new(0.34,0,0,21), BackgroundColor3=manual.TintColor, Text="Изменить", TextColor3=Color3.fromRGB(20,25,22), Font=Enum.Font.GothamSemibold, TextSize=9}, tintRow)
+    local tintRow = make("Frame", {Size=UDim2.new(1,0,0,27), BackgroundTransparency=1}, manualFrame)
+    make("TextLabel", {Size=UDim2.new(0.72,0,1,0), BackgroundTransparency=1, Text="Цветовой оттенок", TextColor3=Color3.fromRGB(205,220,210), Font=Enum.Font.Gotham, TextSize=10, TextXAlignment=Enum.TextXAlignment.Left}, tintRow)
+    local tintButton = make("TextButton", {
+        AnchorPoint=Vector2.new(1,0.5), Position=UDim2.new(1,0,0.5,0),
+        Size=UDim2.fromOffset(24,22), BackgroundColor3=manual.TintColor,
+        Text="", BorderSizePixel=0, AutoButtonColor=true
+    }, tintRow)
     make("UICorner", {CornerRadius=UDim.new(0,5)}, tintButton)
-    local tintChoices = {
-        Color3.fromRGB(255,224,219), Color3.fromRGB(255,230,200),
-        Color3.fromRGB(185,205,255), Color3.fromRGB(205,215,255),
-        Color3.fromRGB(255,230,255), Color3.fromRGB(255,255,255)
-    }
-    local tintIndex = 1
+    make("UIStroke", {Color=Color3.fromRGB(210,230,215), Thickness=1, Transparency=0.25}, tintButton)
+
+    local tintPicker = make("Frame", {
+        Size=UDim2.new(1,0,0,122), BackgroundColor3=Color3.fromRGB(13,20,16),
+        BorderSizePixel=0, Visible=false
+    }, manualFrame)
+    make("UICorner", {CornerRadius=UDim.new(0,6)}, tintPicker)
+    make("UIPadding", {PaddingLeft=UDim.new(0,7), PaddingRight=UDim.new(0,7), PaddingTop=UDim.new(0,3), PaddingBottom=UDim.new(0,3)}, tintPicker)
+
+    local tintR = math.floor(manual.TintColor.R*255+0.5)
+    local tintG = math.floor(manual.TintColor.G*255+0.5)
+    local tintB = math.floor(manual.TintColor.B*255+0.5)
+    local tintBrightness = 1
+    local tintSetters = {}
+
+    local function refreshTint()
+        local color = Color3.new(
+            (tintR/255)*tintBrightness,
+            (tintG/255)*tintBrightness,
+            (tintB/255)*tintBrightness
+        )
+        tintButton.BackgroundColor3 = color
+        applyManual("TintColor",color)
+    end
+
+    local function addTintSlider(label, initial, minValue, maxValue, order, channel)
+        local row = make("Frame", {
+            Position=UDim2.new(0,0,0,(order-1)*29), Size=UDim2.new(1,0,0,25),
+            BackgroundTransparency=1
+        }, tintPicker)
+        local caption = make("TextLabel", {
+            Size=UDim2.fromOffset(34,24), BackgroundTransparency=1,
+            Text=label, TextColor3=Color3.fromRGB(195,215,200),
+            Font=Enum.Font.GothamBold, TextSize=9, TextXAlignment=Enum.TextXAlignment.Left
+        }, row)
+        local valueText = make("TextLabel", {
+            AnchorPoint=Vector2.new(1,0), Position=UDim2.new(1,0,0,0),
+            Size=UDim2.fromOffset(28,24), BackgroundTransparency=1,
+            Text=tostring(math.floor(initial+0.5)), TextColor3=Color3.fromRGB(175,195,180),
+            Font=Enum.Font.Gotham, TextSize=9, TextXAlignment=Enum.TextXAlignment.Right
+        }, row)
+        local track = make("Frame", {
+            Position=UDim2.new(0,35,0,10), Size=UDim2.new(1,-70,0,5),
+            BackgroundColor3=Color3.fromRGB(50,60,52), BorderSizePixel=0
+        }, row)
+        make("UICorner", {CornerRadius=UDim.new(1,0)}, track)
+        if channel == "Brightness" then
+            make("UIGradient", {
+                Color=ColorSequence.new({
+                    ColorSequenceKeypoint.new(0,Color3.new(1,1,1)),
+                    ColorSequenceKeypoint.new(1,Color3.new(0,0,0))
+                })
+            }, track)
+        else
+            local channelColor = channel=="R" and Color3.fromRGB(235,75,75)
+                or (channel=="G" and Color3.fromRGB(75,210,110) or Color3.fromRGB(75,135,245))
+            track.BackgroundColor3 = channelColor:Lerp(Color3.fromRGB(30,35,31),0.45)
+        end
+        local alpha = (initial-minValue)/(maxValue-minValue)
+        local knob = make("TextButton", {
+            AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.new(alpha,0,0.5,0),
+            Size=UDim2.fromOffset(11,11), BackgroundColor3=Color3.fromRGB(245,250,245),
+            Text="", BorderSizePixel=0, AutoButtonColor=false
+        }, track)
+        make("UICorner", {CornerRadius=UDim.new(1,0)}, knob)
+        local draggingColor = false
+        local function setValue(value, apply)
+            value = math.clamp(value,minValue,maxValue)
+            local a = (value-minValue)/(maxValue-minValue)
+            knob.Position = UDim2.new(a,0,0.5,0)
+            valueText.Text = channel=="Brightness" and string.format("%.2f",value) or tostring(math.floor(value+0.5))
+            if channel=="R" then tintR=value
+            elseif channel=="G" then tintG=value
+            elseif channel=="B" then tintB=value
+            else tintBrightness=value end
+            if apply then refreshTint() end
+        end
+        tintSetters[channel] = setValue
+        local function setFromX(x)
+            local a = math.clamp((x-track.AbsolutePosition.X)/math.max(track.AbsoluteSize.X,1),0,1)
+            setValue(minValue+(maxValue-minValue)*a,true)
+        end
+        knob.MouseButton1Down:Connect(function() draggingColor=true end)
+        track.InputBegan:Connect(function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                draggingColor=true
+                setFromX(input.Position.X)
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if draggingColor and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+                setFromX(input.Position.X)
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then draggingColor=false end
+        end)
+    end
+
+    addTintSlider("R",tintR,0,255,1,"R")
+    addTintSlider("G",tintG,0,255,2,"G")
+    addTintSlider("B",tintB,0,255,3,"B")
+    addTintSlider("Ярк.",tintBrightness,0,1,4,"Brightness")
+
+    updateTintControls = function(color)
+        tintR = math.floor(color.R*255+0.5)
+        tintG = math.floor(color.G*255+0.5)
+        tintB = math.floor(color.B*255+0.5)
+        tintBrightness = 1
+        if tintSetters.R then tintSetters.R(tintR,false) end
+        if tintSetters.G then tintSetters.G(tintG,false) end
+        if tintSetters.B then tintSetters.B(tintB,false) end
+        if tintSetters.Brightness then tintSetters.Brightness(1,false) end
+        tintButton.BackgroundColor3 = color
+    end
+
     tintButton.MouseButton1Click:Connect(function()
-        tintIndex = tintIndex % #tintChoices + 1
-        tintButton.BackgroundColor3 = tintChoices[tintIndex]
-        applyManual("TintColor", tintChoices[tintIndex])
+        tintPicker.Visible = not tintPicker.Visible
     end)
 
     local function setEnabled(state)
@@ -339,20 +667,36 @@ local ok, err = xpcall(function()
     end
     activate.MouseButton1Click:Connect(function() setEnabled(not enabled) end)
 
-    -- Soft fade + subtle overshoot/wobble on the compact panel.
-    tween(shade,0.35,{BackgroundTransparency=0.28},Enum.EasingStyle.Sine)
-    panel.Size=UDim2.fromScale(0.22,0.44)
-    panel.Rotation=-2
-    tween(panel,0.55,{Size=UDim2.fromScale(0.25,0.5),BackgroundTransparency=0.04,Rotation=0},Enum.EasingStyle.Back)
-    tween(stroke,0.45,{Transparency=0.12})
+    -- Slow intro: reveal the logo, unfold the panel, then settle the mark into the panel header.
+    panel.Size = UDim2.fromScale(0.10,0.10)
+    panel.Position = UDim2.fromScale(0.5,0.54)
+    panel.BackgroundTransparency = 1
+    panel.Rotation = -1.5
+    tween(shade,0.95,{BackgroundTransparency=0.28},Enum.EasingStyle.Sine)
+    tween(logo,1.25,{TextTransparency=0,TextStrokeTransparency=0.05},Enum.EasingStyle.Sine)
+    task.wait(1.05)
+    tween(panel,1.45,{
+        Size=UDim2.fromScale(0.25,0.5),
+        BackgroundTransparency=0.04,
+        Rotation=0
+    },Enum.EasingStyle.Quint)
+    tween(stroke,1.1,{Transparency=0.12},Enum.EasingStyle.Sine)
+    tween(logo,1.6,{
+        Position=UDim2.new(0.375,31,0.29,20),
+        Size=UDim2.fromOffset(38,38),
+        Rotation=0,
+        TextSize=42
+    },Enum.EasingStyle.Sine)
+    task.wait(0.55)
     local greeting = "Здравствуй"
     for i=1,utf8.len(greeting) do
         local nextByte = utf8.offset(greeting, i+1)
         header.Text = string.sub(greeting, 1, nextByte and nextByte-1 or #greeting)
         header.TextTransparency=1
-        tween(header,0.08,{TextTransparency=0},Enum.EasingStyle.Linear)
-        task.wait(0.055)
+        tween(header,0.22,{TextTransparency=0},Enum.EasingStyle.Sine)
+        task.wait(0.18)
     end
+    shade.BackgroundTransparency=1
     -- Keep the brand mark as a compact top-center emblem above the window.
     logo.TextSize=48
     logo.Position=UDim2.new(0.5,0,0,34)
@@ -368,4 +712,6 @@ if not ok then
 end
 
 -- Keep a cleanup hook available to this executor session.
-ENV["__RUNFILE_SHADERS_CLEANUP"] = shutdown
+if alive then
+    ENV["__RUNFILE_SHADERS_CLEANUP"] = function() shutdown(false) end
+end
